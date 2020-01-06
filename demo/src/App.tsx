@@ -6,7 +6,7 @@ import Audio, {
   AudioVolumeRange,
   AudioProgressRange,
   AudioTime,
-} from '../Audio';
+} from './Audio';
 
 const App: React.FC = () => {
   return (
