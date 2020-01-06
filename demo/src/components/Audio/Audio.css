@@ -1,0 +1,12 @@
+[data-audio-react] {
+}
+
+[data-audio-react-volume] {
+}
+
+[data-audio-react-range] {
+}
+
+*:focus {
+  outline: 2px solid red !important;
+}
