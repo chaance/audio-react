@@ -1,0 +1,39 @@
+{
+  "name": "re-audio",
+  "version": "0.0.1",
+  "private": false,
+  "peerDependencies": {
+    "react": "^16.8.0",
+    "react-dom": "^16.8.0"
+  },
+  "dependencies": {
+    "@reach/auto-id": "^0.7.0",
+    "@reach/slider": "^0.7.0",
+    "@reach/visually-hidden": "^0.7.0",
+    "@xstate/fsm": "^1.1.0",
+    "@xstate/react": "^0.8.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^4.2.4",
+    "@testing-library/react": "^9.3.2",
+    "@testing-library/user-event": "^7.1.2",
+    "@types/jest": "^24.0.0",
+    "@types/node": "^12.0.0",
+    "@types/react": "^16.9.0",
+    "@types/react-dom": "^16.9.0",
+    "prettier": "^1.19.1",
+    "prop-types": "^15.7.2",
+    "react": "^16.12.0",
+    "react-dom": "^16.12.0",
+    "react-scripts": "3.3.0",
+    "typescript": "~3.7.2"
+  },
+  "browserslist": {},
+  "eslintConfig": {
+    "extends": "react-app"
+  },
+  "prettier": {
+    "singleQuote": true,
+    "trailingComma": "es5"
+  }
+}
