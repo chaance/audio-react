@@ -3,6 +3,7 @@ import React, {
   createContext,
   forwardRef,
   useCallback,
+  useMemo,
   useRef,
   useContext,
   isValidElement,
@@ -30,12 +31,11 @@ import './Audio.css';
 
 /**
  * TODO: A11y notes:
+ *   - Double check all labels and make sure everything is announced properly
  *   - Outer group should be focused on click rather than indivudual components
  *       - When group is focused:
  *           - Up/Down/PageUp/PageDown controls volume
  *           - Left/Right/Home/End controls progress
- *           - Space/Enter toggle play
- *   - Individual components receive focus on keyboard interactions
  *   - Valuetext for volume and progress range elements
  */
 
@@ -52,27 +52,24 @@ export type ARCContextValue = {
   send(event: ARMEventObject | ARMEvents): void;
   state: ARMStates;
   handleGroupFocus(): void;
-  handleSeekStart(): void;
-  handleSeekStop(value: number): void;
-  handleVolumeChange(value: number): void;
   togglePlay(): void;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
 // ARC
 
-const Audio: React.FC<ARCAudioProps> = ({
-  children,
-  loop = false,
-  src,
-  preload,
-  ...props
-}) => {
+const Audio = forwardRef<HTMLDivElement, ARCAudioProps>(function Audio(
+  { children, loop = false, src, onKeyDown, preload, ...props },
+  forwardedRef
+) {
   const [current, _send] = useMachine(playerMachine);
   const {
     context,
     context: {
       audio: audioElement,
+      progressValue,
+      // duration,
+      volume,
       // currentTime,
     },
     value: state,
@@ -92,13 +89,19 @@ const Audio: React.FC<ARCAudioProps> = ({
     _send(event);
   }
 
-  console.table({ actions });
-
   const groupRef = useRef<HTMLDivElement | null>(null);
+  const ref = useForkedRef(forwardedRef, groupRef);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const assignRef = useCallback((node: HTMLAudioElement) => {
-    audioRef.current = node;
-    send({ type: ARMEvents.SetAudioElement, audio: node });
+
+  const setAudioRef = useCallback((audio: HTMLAudioElement) => {
+    audioRef.current = audio;
+
+    // TODO: Hack, not sure why this doesn't trigger a state update immediately
+    //       so I probably need to figure that out...
+    requestAnimationFrame(() => {
+      send({ type: ARMEvents.SetAudioElement, audio });
+    });
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -107,18 +110,11 @@ const Audio: React.FC<ARCAudioProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
-  const handleSeekStart = useCallback(() => {
-    send({ type: ARMEvents.SeekStart });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const handleGroupFocus = useCallback(() => {
+    // @reach/slider manages focus of the slider handle, so we need to steal
+    // it back for the outer group element when a slider pointerdown event
+    // occurs
     requestAnimationFrame(() => groupRef.current && groupRef.current.focus());
-  }, []);
-
-  const handleSeekStop = useCallback((value: number) => {
-    send({ type: ARMEvents.SeekStop, time: value });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function handleAudioEnded() {
@@ -138,10 +134,33 @@ const Audio: React.FC<ARCAudioProps> = ({
     send({ type: ARMEvents.SetDuration });
   }
 
-  const handleVolumeChange = useCallback((volume: number) => {
-    send({ type: ARMEvents.SetVolume, volume });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  function handleKeyDown(event: React.KeyboardEvent) {
+    switch (event.key) {
+      case ' ':
+      case 'Enter':
+        togglePlay();
+        break;
+      case 'ArrowUp':
+        send({ type: ARMEvents.SetVolume, volume: volume + 10 });
+        break;
+      case 'ArrowDown':
+        send({ type: ARMEvents.SetVolume, volume: volume - 10 });
+        break;
+      case 'PageDown': // TODO: Test
+      case 'PageUp': // TODO: Test
+        return;
+      case 'ArrowRight':
+        send({ type: ARMEvents.SetTime, time: progressValue + 15 });
+        break;
+      case 'ArrowLeft':
+        send({ type: ARMEvents.SetTime, time: progressValue - 15 });
+        break;
+      case 'Home': // TODO: Test
+      case 'End': // TODO: Test
+      default:
+        return;
+    }
+  }
 
   return (
     <ARCContext.Provider
@@ -150,9 +169,6 @@ const Audio: React.FC<ARCAudioProps> = ({
         changed,
         context,
         handleGroupFocus,
-        handleSeekStart,
-        handleSeekStop,
-        handleVolumeChange,
         matches,
         send,
         state: state as ARMStates,
@@ -160,16 +176,17 @@ const Audio: React.FC<ARCAudioProps> = ({
       }}
     >
       <div
+        data-audio-react=""
+        ref={ref}
+        onKeyDown={wrapEvent(onKeyDown, handleKeyDown)}
         role="group"
         tabIndex={0}
-        ref={groupRef}
-        data-audio-react=""
         {...props}
       >
         <div style={{ margin: 20 }}>STATE: {state}</div>
         {children}
         <audio
-          ref={assignRef}
+          ref={setAudioRef}
           hidden
           controls={false}
           preload={preload}
@@ -181,7 +198,7 @@ const Audio: React.FC<ARCAudioProps> = ({
       </div>
     </ARCContext.Provider>
   );
-};
+});
 
 export interface ARCAudioProps extends Element<'div'> {
   loop?: boolean;
@@ -192,7 +209,7 @@ export interface ARCAudioProps extends Element<'div'> {
 export default Audio;
 
 ////////////////////////////////////////////////////////////////////////////////
-// AudioNextButton
+// AudioNextButton TODO: Handle multiple tracks (maybe?)
 
 export const AudioNextButton: React.FC<AudioNextButtonProps> = ({
   icon,
@@ -293,8 +310,6 @@ export const AudioProgressRange: React.FC<AudioProgressRangeProps> = ({
     send,
     context: { duration, progressValue },
     handleGroupFocus,
-    handleSeekStart,
-    handleSeekStop,
   } = useContext(ARCContext);
 
   function isSeeking(key: string) {
@@ -320,13 +335,16 @@ export const AudioProgressRange: React.FC<AudioProgressRangeProps> = ({
       max={duration}
       data-audio-react-progress-range=""
       onKeyDown={wrapEvent(onKeyDown, event => {
+        // Prevents events at the top level from calling other controls
+        event.stopPropagation();
+
         if (isSeeking(event.key)) {
-          handleSeekStart();
+          send({ type: ARMEvents.SeekStart });
         }
       })}
       onKeyUp={wrapEvent(onKeyUp, event => {
         if (isSeeking(event.key)) {
-          handleSeekStop(progressValue);
+          send({ type: ARMEvents.SeekStop, time: progressValue });
         }
       })}
       onChange={newValue => {
@@ -342,10 +360,10 @@ export const AudioProgressRange: React.FC<AudioProgressRangeProps> = ({
       }}
       onPointerDown={() => {
         handleGroupFocus();
-        handleSeekStart();
+        send({ type: ARMEvents.SeekStart });
       }}
       onPointerUp={wrapEvent(onPointerUp, () => {
-        handleSeekStop(progressValue);
+        send({ type: ARMEvents.SeekStop, time: progressValue });
       })}
       value={progressValue}
     >
@@ -488,24 +506,28 @@ export interface AudioVolumeButtonProps extends MaybeIconButtonProps {
 
 export const AudioVolumeRange: React.FC<AudioVolumeRangeProps> = ({
   onChange,
+  onKeyDown,
   onPointerDown,
   ...props
 }) => {
   const {
+    send,
     context: { volume },
     handleGroupFocus,
-    handleVolumeChange,
   } = useContext(ARCContext);
   return (
     <SliderInput
       {...props}
       min={0}
       max={100}
-      step={1}
-      onChange={value => {
-        onChange && onChange(value);
-        handleVolumeChange(value);
+      onChange={volume => {
+        onChange && onChange(volume);
+        send({ type: ARMEvents.SetVolume, volume });
       }}
+      onKeyDown={wrapEvent(onKeyDown, event => {
+        // Prevents events at the top level from calling other controls
+        event.stopPropagation();
+      })}
       onPointerDown={wrapEvent(onPointerDown, handleGroupFocus)}
       value={volume}
     >
@@ -914,6 +936,39 @@ function wrapEvent<E extends React.SyntheticEvent = React.SyntheticEvent>(
       return ourHandler(event);
     }
   };
+}
+
+function assignRef<T = any>(
+  ref: React.Ref<T> | React.MutableRefObject<T | null>,
+  value: any
+) {
+  if (ref == null) return;
+  if (typeof ref === 'function') {
+    ref(value);
+  } else {
+    try {
+      // @ts-ignore
+      ref.current = value;
+    } catch (error) {
+      throw new Error(`Cannot assign value "${value}" to ref "${ref}"`);
+    }
+  }
+}
+
+function useForkedRef<T>(
+  ...refs: (React.Ref<T> | React.MutableRefObject<T | null>)[]
+) {
+  return useMemo(() => {
+    if (refs.every(ref => ref == null)) {
+      return null;
+    }
+    return (node: T) => {
+      refs.forEach(ref => {
+        assignRef(ref, node);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, refs);
 }
 
 type Element<T extends keyof JSX.IntrinsicElements> = React.PropsWithoutRef<

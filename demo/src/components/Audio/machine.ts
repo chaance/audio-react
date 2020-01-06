@@ -118,15 +118,22 @@ const setTime: ARMAction = {
   type: 'setTime',
   exec: (context, event: { type: ARMEvents; time?: number }) => {
     if (context.audio && event.time) {
-      context.audio.currentTime = event.time;
+      // TODO: This does not appear to trigger ontimeupdate when the media is
+      //       paused, so we need to revisit that approach.
+      context.audio.currentTime = Math.max(
+        Math.min(event.time, context.audio.duration),
+        0
+      );
     }
   },
 };
 
 const setDuration: ARMAction = assign((context: ARMContext) => {
+  /*
   console.group('SETTING DURATION');
   console.log({ audio: context.audio });
   console.groupEnd();
+  */
   if (context.audio) {
     return {
       ...context,
@@ -138,9 +145,11 @@ const setDuration: ARMAction = assign((context: ARMContext) => {
 
 const setProgress: ARMAction = assign(
   (context: ARMContext, event: { value?: number }) => {
+    /*
     console.group('SETTING PROGRESS');
     console.log({ audio: context.audio });
     console.groupEnd();
+    */
     if (event.value) {
       return {
         ...context,
@@ -153,13 +162,11 @@ const setProgress: ARMAction = assign(
 
 const setVolume: ARMAction = assign(
   (context: ARMContext, event: { type: ARMEvents; volume?: number }) => {
-    console.group('SETTING VOLUME');
-    console.log({ volume: event.volume });
-    console.groupEnd();
     const { audio, volume: previousVolume } = context;
-    const { volume: newVolume } = event;
-    if (audio && newVolume != null) {
-      audio.volume = Math.max(Math.min(newVolume / 100, 1), 0);
+    const { volume } = event;
+    if (audio && volume != null) {
+      let newVolume = Math.max(Math.min(volume, 100), 0);
+      audio.volume = newVolume / 100;
       return {
         ...context,
         previousVolume,
@@ -172,10 +179,15 @@ const setVolume: ARMAction = assign(
 
 const handleMute: ARMAction = assign((context: ARMContext) => {
   const { audio, previousVolume, volume } = context;
-  const newVolume =
-    volume === 0 ? (previousVolume >= 1 ? 100 : previousVolume) : 0;
+  const newVolume = Math.max(
+    Math.min(
+      volume === 0 ? (previousVolume <= 1 ? 100 : previousVolume) : 0,
+      100
+    ),
+    0
+  );
   if (audio) {
-    audio.volume = Math.max(Math.min(newVolume / 100, 1), 0);
+    audio.volume = newVolume / 100;
     return {
       ...context,
       previousVolume: volume,
@@ -214,14 +226,20 @@ const getDataFromProps: ARMAction = assign(
   ) => ({ ...context, ...event.props } || context)
 );
 
+const setPreviouslyPlaying: ARMAction = assign({ previouslyPlaying: true });
+
+const unsetPreviouslyPlaying: ARMAction = assign({ previouslyPlaying: false });
+
 const setAudioElement: ARMAction = assign(
   (
     context: ARMContext,
     event: { type: ARMEvents; audio?: HTMLAudioElement }
   ) => {
+    /*
     console.group('SETTING AUDIO ELEMENT');
     console.log({ audio: event.audio });
     console.groupEnd();
+    */
     if (context.audio && !context.audio.paused) {
       context.audio.pause();
     }
@@ -240,16 +258,11 @@ const setAudioElement: ARMAction = assign(
 ////////////////////////////////////////////////////////////////////////////////
 // State Machine Events
 
+// These events can be called in any state except for errors in which case audio
+// is not available to be played.
 const commonNonErrorEvents = {
-  [ARMEvents.SetAudioElement]: {
-    // target: ARMStates.Idle,
-    actions: setAudioElement,
-  },
-  [ARMEvents.SetDuration]: {
-    actions: setDuration,
-  },
   [ARMEvents.SetTime]: {
-    actions: setTime,
+    actions: [setTime],
   },
   [ARMEvents.HandleTimeChange]: {
     actions: handleTimeChange,
@@ -272,12 +285,12 @@ const commonEvents = {
   },
   // Should fire any time a ref is attached to a new DOM node
   [ARMEvents.SetAudioElement]: {
-    // target: ARMStates.Idle,
+    target: ARMStates.Idle,
     actions: setAudioElement,
   },
   [ARMEvents.Reset]: {
     target: ARMStates.Idle,
-    actions: [resetTime, pauseAudio, assign({ previouslyPlaying: false })],
+    actions: [resetTime, pauseAudio, unsetPreviouslyPlaying],
   },
   [ARMEvents.SetError]: {
     target: ARMStates.Error,
@@ -320,6 +333,14 @@ const playerMachine = createMachine<ARMContext, ARMEventObject, ARMStateObject>(
         on: {
           ...commonEvents,
           ...commonNonErrorEvents,
+          [ARMEvents.SetAudioElement]: {
+            target: ARMStates.Idle,
+            actions: setAudioElement,
+          },
+          [ARMEvents.SetDuration]: {
+            // target: ARMStates.Idle,
+            actions: setDuration,
+          },
           [ARMEvents.Play]: ARMStates.Playing,
           [ARMEvents.SeekStart]: ARMStates.Seeking,
         },
@@ -343,16 +364,12 @@ const playerMachine = createMachine<ARMContext, ARMEventObject, ARMStateObject>(
             },
             {
               target: ARMStates.Idle,
-              actions: [
-                pauseAudio,
-                resetTime,
-                assign({ previouslyPlaying: false }),
-              ],
+              actions: [pauseAudio, resetTime, unsetPreviouslyPlaying],
             },
           ],
         },
         entry: playAudio,
-        exit: assign({ previouslyPlaying: true }),
+        exit: setPreviouslyPlaying,
       },
       [ARMStates.Paused]: {
         on: {
@@ -361,8 +378,8 @@ const playerMachine = createMachine<ARMContext, ARMEventObject, ARMStateObject>(
           [ARMEvents.Play]: ARMStates.Playing,
           [ARMEvents.SeekStart]: ARMStates.Seeking,
         },
-        entry: [pauseAudio],
-        exit: assign({ previouslyPlaying: false }),
+        entry: pauseAudio,
+        exit: unsetPreviouslyPlaying,
       },
       [ARMStates.Seeking]: {
         on: {
@@ -387,7 +404,7 @@ const playerMachine = createMachine<ARMContext, ARMEventObject, ARMStateObject>(
         on: {
           ...commonEvents,
         },
-        entry: assign({ previouslyPlaying: false }),
+        entry: unsetPreviouslyPlaying,
       },
     },
   }
